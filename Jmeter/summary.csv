@@ -1,0 +1,6 @@
+Label,# Samples,Average,Min,Max,Std. Dev.,Error %,Throughput,Received KB/sec,Sent KB/sec,Avg. Bytes
+0. Login (Authenticate User Credentials & Initialize Session),100,935,873,2613,240.56,0.000%,38.25555,97.25,9.56,2603.0
+Admin - User Profile,100,326,242,380,24.83,0.000%,51.15090,130.03,13.89,2603.0
+Admin - Help,100,261,240,376,18.73,0.000%,52.63158,133.79,14.44,2603.0
+Admin - Ticketing System,100,278,245,369,20.53,0.000%,50.83884,129.23,14.00,2603.0
+TOTAL,400,450,240,2613,306.21,0.000%,117.06175,297.57,31.35,2603.0
