@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { getPerformanceMetrics, attachPerformanceMetrics } from '../utils/perfMeter';
+import { saveMetricsToMongoDB, saveErrorLogsToMongoDB, generateProcessId } from '../utils/mongoSaver';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -8,6 +9,7 @@ const userId = process.env.USER_ID || 'superadminmartinrea1@martinrea.com';
 const password = process.env.PASSWORD || 'Dell@1234';
 const repeatCount = Number(process.env.CYCLE_COUNT || 1);
 const hitCount = Number(process.env.TAB_COUNT || 50);
+const maxExecutionTimeMs = Number(process.env.MAX_EXECUTION_TIME_MS || process.env.TEST_TIMEOUT_MS || 120000);
 
 const authFile = path.join(process.cwd(), 'playwright/.auth/user.json');
 
@@ -39,9 +41,10 @@ interface HitResult {
     error: string | null;
 }
 
-test(`Admin Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
+test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
     test.setTimeout(0);
-    const testStartedAt = Date.now();
+    let testStartedAt = Date.now();
+    const processId = generateProcessId('PROC-ADMIN');
 
     console.log('================================================================================');
     console.log(' PHASE 1: STRICT UI LOGIN & INTERCEPTING ADMIN BACKEND REST API ENDPOINTS       ');
@@ -248,16 +251,36 @@ test(`Admin Backend REST API Load Test - Real Azure App Service Spikes (${hitCou
     console.log(` PHASE 2: EXECUTING PARALLEL PROMISE.ALL() PER ADMIN API SEQUENTIALLY ONE AFTER ANOTHER`);
     console.log('================================================================================\n');
 
+    // Reset execution timer so it starts strictly from the 1st REST API triggering point after Phase 1 setup
+    testStartedAt = Date.now();
+    console.log(`[EXECUTION TIMER STARTED] 1st API Triggering Point Started at: ${new Date(testStartedAt).toISOString()}`);
+    console.log(`[TIMING CONFIRMED] Execution duration limit (${(maxExecutionTimeMs / 1000).toFixed(2)}s) will count strictly from this moment.\n`);
+
     const allResults: HitResult[] = [];
     let totalHitsFired = 0;
     let totalSuccessfulHits = 0;
 
     for (let cycle = 1; cycle <= repeatCount; cycle++) {
+        const currentElapsedMs = Date.now() - testStartedAt;
+        if (currentElapsedMs >= maxExecutionTimeMs) {
+            console.log(`\n================================================================================`);
+            console.log(`[EXACT TIME LIMIT REACHED] Total process execution time (${currentElapsedMs}ms) reached exact target limit of ${maxExecutionTimeMs}ms.`);
+            console.log(`Concluding load test execution and generating final MongoDB records...`);
+            console.log(`================================================================================\n`);
+            break;
+        }
+
         console.log(`==================================================`);
-        console.log(` Starting Admin Synchronized Cycle [${cycle}/${repeatCount}]`);
+        console.log(` Starting Admin Synchronized Cycle [${cycle}/${repeatCount}] (Elapsed: ${(currentElapsedMs / 1000).toFixed(2)}s / ${(maxExecutionTimeMs / 1000).toFixed(2)}s)`);
         console.log(`==================================================`);
 
         for (let i = 0; i < capturedApiList.length; i++) {
+            const loopElapsedMs = Date.now() - testStartedAt;
+            if (loopElapsedMs >= maxExecutionTimeMs) {
+                console.log(`\n[EXACT TIME LIMIT REACHED] Target duration of ${maxExecutionTimeMs}ms reached. Wrapping up current results...`);
+                break;
+            }
+
             const targetApi = capturedApiList[i];
             const apiOrder = i + 1;
 
@@ -351,6 +374,8 @@ test(`Admin Backend REST API Load Test - Real Azure App Service Spikes (${hitCou
     const avgTime = sortedTimes.length ? Math.round(sortedTimes.reduce((a, b) => a + b, 0) / sortedTimes.length) : 0;
     const p95Time = sortedTimes.length ? sortedTimes[Math.floor(sortedTimes.length * 0.95)] || maxTime : 0;
 
+    const failedHits = allResults.filter(r => !r.success);
+
     const reportContent = `================================================================================
             ADMIN BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT                      
 ================================================================================
@@ -359,6 +384,7 @@ Total Simultaneous Hits/API:    ${hitCount}
 Repeat Cycles Executed:         ${repeatCount}
 Total Direct REST API Hits:     ${totalHitsFired} hits
 Total Successful Responses:     ${totalSuccessfulHits} (200/304/204 OK)
+Total Failed Hits (Failed Num): ${failedHits.length} hits
 Total Execution Time:           ${(testExecutionTimeMs / 1000).toFixed(2)} seconds
 Min Response Latency:           ${minTime} ms
 Average Response Latency:       ${avgTime} ms
@@ -374,63 +400,38 @@ P95 Response Latency:           ${p95Time} ms
         body: Buffer.from(reportContent, 'utf-8'),
     });
 
-    if (perfMetrics) {
-        attachPerformanceMetrics(testInfo, 'Admin Backend REST API Load Test', perfMetrics, {
-            tabsCount: hitCount,
-            repeatCount,
-            totalHits: totalHitsFired,
-            minResponseTimeMs: minTime,
-            avgResponseTimeMs: avgTime,
-            maxResponseTimeMs: maxTime,
-            p95ResponseTimeMs: p95Time,
-            executionTimeSeconds: Number((testExecutionTimeMs / 1000).toFixed(2)),
-        });
+    // Save Execution Metrics to MongoDB via Connection String
+    const timedOutCount = allResults.filter(r => !r.success || r.responseTimeMs >= 45000).length;
+    const startedDateTime = new Date(testStartedAt).toISOString();
+    const endedDateTime = new Date().toISOString();
+
+    await saveMetricsToMongoDB(process.env.MONGODB_URI, {
+        processId,
+        testModule: 'Admin Pages Backend REST API Load Test',
+        startedDateTime,
+        endedDateTime,
+        concurrencyLevel: hitCount,
+        totalHits: totalHitsFired,
+        passed200OK: totalSuccessfulHits,
+        failedHitsCount: failedHits.length,
+        timedOutOver45s: timedOutCount,
+        avgLatencyMs: avgTime,
+        p95LatencyMs: p95Time,
+        minLatencyMs: minTime,
+        maxLatencyMs: maxTime,
+        executionTimeSeconds: Number((testExecutionTimeMs / 1000).toFixed(2)),
+        maxExecutionTimeSeconds: Number((maxExecutionTimeMs / 1000).toFixed(2))
+    }, 'admin_load_metrics');
+
+    if (failedHits.length > 0) {
+        await saveErrorLogsToMongoDB(
+            process.env.MONGODB_URI,
+            processId,
+            failedHits,
+            'Admin Pages Backend REST API Load Test',
+            'admin_load_error_logs'
+        );
     }
-
-    // Save Failed Hit Logs into logs/ folder
-    const failedHits = allResults.filter(r => !r.success);
-    const logsDir = path.join(process.cwd(), 'logs');
-    if (!fs.existsSync(logsDir)) {
-        fs.mkdirSync(logsDir, { recursive: true });
-    }
-
-    const jsonLogPath = path.join(logsDir, `failed_admin_backend_api_hits.json`);
-    const txtLogPath = path.join(logsDir, `failed_admin_backend_api_hits.log`);
-
-    const jsonLogData = {
-        testModule: 'Admin Backend REST API Load Test',
-        runTimestamp: new Date().toISOString(),
-        totalFired: totalHitsFired,
-        totalSuccessful: totalSuccessfulHits,
-        totalFailed: failedHits.length,
-        failedHitDetails: failedHits
-    };
-
-    fs.writeFileSync(jsonLogPath, JSON.stringify(jsonLogData, null, 2), 'utf-8');
-
-    let txtLogContent = `================================================================================\n`;
-    txtLogContent += ` FAILED ADMIN BACKEND REST API HITS LOG - ${new Date().toISOString()}\n`;
-    txtLogContent += ` Total Fired: ${totalHitsFired} | Successful: ${totalSuccessfulHits} | Failed: ${failedHits.length}\n`;
-    txtLogContent += `================================================================================\n\n`;
-
-    if (failedHits.length === 0) {
-        txtLogContent += `[SUCCESS] 0 Failed Hits Recorded! All ${totalHitsFired} API requests succeeded (HTTP 200/304/204 OK).\n`;
-    } else {
-        failedHits.forEach((hit, i) => {
-            txtLogContent += `[Failed Hit #${i + 1}] Hit ID: ${hit.id} | Status: ${hit.status} | Time: ${hit.responseTimeMs}ms | Error: ${hit.error}\n`;
-            txtLogContent += `  Target API URL: ${hit.apiUrl}\n`;
-            txtLogContent += `--------------------------------------------------------------------------------\n`;
-        });
-    }
-
-    fs.writeFileSync(txtLogPath, txtLogContent, 'utf-8');
-
-    console.log('\n================================================================================');
-    console.log(`[FAILED LOGS STORED] Failed Hit Logs successfully written to logs/ folder:`);
-    console.log(` -> JSON Log: ${jsonLogPath}`);
-    console.log(` -> Text Log: ${txtLogPath}`);
-    console.log(` Total Failed Hits Logged: ${failedHits.length} / ${totalHitsFired}`);
-    console.log('================================================================================\n');
 
     await context.close().catch(() => { });
     expect(totalSuccessfulHits).toBeGreaterThan(0);

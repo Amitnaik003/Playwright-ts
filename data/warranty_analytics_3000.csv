@@ -1,0 +1,6 @@
+id,claim_count,repair_cost,failure_ppm,resolution_days,month,vehicle_line,supplier_plant,moduleCategory,ppmStatus,riskLevel
+record_csv_1,15,450,120,5,2026-01,F-150,Detroit,Powertrain Systems,FAIL,HIGH RISK
+record_csv_2,22,890,240,7,2026-02,Explorer,Dearborn,Electrical & Electronics,PASS,LOW RISK
+record_csv_3,8,310,90,3,2026-03,Mustang,Flat Rock,Chassis & Suspension,WARNING,MEDIUM RISK
+record_csv_4,34,1450,410,11,2026-04,Bronco,Louisville,Thermal Management,FAIL,HIGH RISK
+record_csv_5,19,670,180,6,2026-05,Escape,Detroit,Powertrain Systems,PASS,LOW RISK

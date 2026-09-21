@@ -1,0 +1,41 @@
+[
+  {
+    "id": "record_json_1",
+    "claim_count": 18,
+    "repair_cost": 520,
+    "failure_ppm": 140,
+    "resolution_days": 4,
+    "month": "2026-01",
+    "vehicle_line": "F-150",
+    "supplier_plant": "Detroit",
+    "moduleCategory": "Powertrain Systems",
+    "ppmStatus": "FAIL",
+    "riskLevel": "HIGH RISK"
+  },
+  {
+    "id": "record_json_2",
+    "claim_count": 26,
+    "repair_cost": 940,
+    "failure_ppm": 210,
+    "resolution_days": 8,
+    "month": "2026-02",
+    "vehicle_line": "Explorer",
+    "supplier_plant": "Dearborn",
+    "moduleCategory": "Electrical & Electronics",
+    "ppmStatus": "PASS",
+    "riskLevel": "LOW RISK"
+  },
+  {
+    "id": "record_json_3",
+    "claim_count": 12,
+    "repair_cost": 410,
+    "failure_ppm": 95,
+    "resolution_days": 3,
+    "month": "2026-03",
+    "vehicle_line": "Mustang",
+    "supplier_plant": "Flat Rock",
+    "moduleCategory": "Chassis & Suspension",
+    "ppmStatus": "WARNING",
+    "riskLevel": "MEDIUM RISK"
+  }
+]
