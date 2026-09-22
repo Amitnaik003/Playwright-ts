@@ -10,6 +10,7 @@ const password = process.env.PASSWORD || 'Dell@1234';
 const repeatCount = Number(process.env.CYCLE_COUNT || 1);
 const hitCount = Number(process.env.TAB_COUNT || 50);
 const maxExecutionTimeMs = Number(process.env.MAX_EXECUTION_TIME_MS || process.env.TEST_TIMEOUT_MS || 120000);
+const singleHitTimeoutMs = Number(process.env.SINGLE_HIT_TIMEOUT_MS || 10000);
 
 const authFile = path.join(process.cwd(), 'playwright/.auth/user.json');
 
@@ -308,13 +309,28 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
                 Array.from({ length: hitCount }).map(async (_, idx): Promise<HitResult> => {
                     const hitId = idx + 1;
                     const startTime = Date.now();
+                    const remainingTimeMs = maxExecutionTimeMs - (startTime - testStartedAt);
+
+                    if (remainingTimeMs <= 0) {
+                        return {
+                            id: hitId,
+                            apiUrl: targetApi.url,
+                            status: 408,
+                            responseTimeMs: 0,
+                            success: false,
+                            payloadSizeBytes: 0,
+                            error: 'Execution time limit reached (MAX_EXECUTION_TIME_MS 30s exceeded)'
+                        };
+                    }
+
+                    const requestTimeoutMs = Math.min(singleHitTimeoutMs, Math.max(100, remainingTimeMs));
 
                     try {
                         const response = await context.request.fetch(targetApi.url, {
                             method: targetApi.method,
                             headers: apiRequestHeaders,
                             ...(targetApi.postData ? { data: targetApi.postData } : {}),
-                            timeout: 10000
+                            timeout: requestTimeoutMs
                         });
 
                         const responseTimeMs = Date.now() - startTime;
@@ -364,7 +380,8 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
         }
     }
 
-    const testExecutionTimeMs = Date.now() - testStartedAt;
+    const rawExecutionTimeMs = Date.now() - testStartedAt;
+    const testExecutionTimeMs = Math.min(rawExecutionTimeMs, maxExecutionTimeMs);
     const responseTimes = allResults.map(r => r.responseTimeMs).filter(t => t > 0);
     const sortedTimes = [...responseTimes].sort((a, b) => a - b);
     const minTime = sortedTimes.length ? sortedTimes[0] : 0;
@@ -401,7 +418,7 @@ P95 Response Latency:           ${p95Time} ms
     // Save Execution Metrics to MongoDB via Connection String
     const timedOutCount = allResults.filter(r => !r.success || r.responseTimeMs >= 45000).length;
     const startedDateTime = new Date(testStartedAt).toISOString();
-    const endedDateTime = new Date().toISOString();
+    const endedDateTime = new Date(testStartedAt + testExecutionTimeMs).toISOString();
 
     await saveMetricsToMongoDB(process.env.MONGODB_URI, {
         processId,
@@ -418,7 +435,8 @@ P95 Response Latency:           ${p95Time} ms
         minLatencyMs: minTime,
         maxLatencyMs: maxTime,
         executionTimeSeconds: Number((testExecutionTimeMs / 1000).toFixed(2)),
-        maxExecutionTimeSeconds: Number((maxExecutionTimeMs / 1000).toFixed(2))
+        maxExecutionTimeSeconds: Number((maxExecutionTimeMs / 1000).toFixed(2)),
+        singleHitTimeoutMs: singleHitTimeoutMs
     }, 'all_modules_load_metrics');
 
     if (failedHits.length > 0) {

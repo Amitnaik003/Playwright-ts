@@ -22,6 +22,9 @@ export interface LoadTestMetricsDocument {
     executionTimeSeconds: number;    // Actual Execution Time in seconds
     maxExecutionTimeSeconds: number; // Target Max Execution Time limit in seconds
     maxExecutionTimeFormatted: string; // e.g. "120 sec" or "30 sec"
+    singleHitTimeoutMs: number;      // Single Hit Request Timeout in ms (e.g. 10000)
+    singleHitTimeoutSeconds: number; // Single Hit Request Timeout in seconds (e.g. 10)
+    singleHitTimeoutFormatted: string; // e.g. "10 sec"
     mongoDbUriUsed?: string;         // Masked Connection String
     status: string;                  // Execution Status: SUCCESS | WARNING
 }
@@ -114,6 +117,8 @@ export async function saveMetricsToMongoDB(
         maxLatencyMs?: number;
         executionTimeSeconds?: number;
         maxExecutionTimeSeconds?: number;
+        singleHitTimeoutMs?: number;
+        singleHitTimeoutSeconds?: number;
     },
     collectionName: string = 'master_load_metrics'
 ): Promise<{ success: boolean; document: LoadTestMetricsDocument; message: string }> {
@@ -134,6 +139,14 @@ export async function saveMetricsToMongoDB(
     const maxExecSec = metrics.maxExecutionTimeSeconds !== undefined
         ? metrics.maxExecutionTimeSeconds
         : Number((Number(process.env.MAX_EXECUTION_TIME_MS || process.env.TEST_TIMEOUT_MS || 120000) / 1000).toFixed(2));
+
+    const singleHitMs = metrics.singleHitTimeoutMs !== undefined
+        ? metrics.singleHitTimeoutMs
+        : Number(process.env.SINGLE_HIT_TIMEOUT_MS || 10000);
+
+    const singleHitSec = metrics.singleHitTimeoutSeconds !== undefined
+        ? metrics.singleHitTimeoutSeconds
+        : Number((singleHitMs / 1000).toFixed(2));
 
     const nowIso = new Date().toISOString();
     const document: LoadTestMetricsDocument = {
@@ -157,6 +170,9 @@ export async function saveMetricsToMongoDB(
         executionTimeSeconds: metrics.executionTimeSeconds || 0,
         maxExecutionTimeSeconds: maxExecSec,
         maxExecutionTimeFormatted: `${maxExecSec} sec`,
+        singleHitTimeoutMs: singleHitMs,
+        singleHitTimeoutSeconds: singleHitSec,
+        singleHitTimeoutFormatted: `${singleHitSec} sec`,
         mongoDbUriUsed: maskedUri,
         status: rateNumber >= 90 ? 'SUCCESS' : 'WARNING'
     };
@@ -177,6 +193,7 @@ export async function saveMetricsToMongoDB(
     console.log(`   - Success Rate      : ${document.successRate}`);
     console.log(`   - Avg Latency       : ${document.avgLatencyFormatted}`);
     console.log(`   - P95 Latency       : ${document.p95LatencyFormatted}`);
+    console.log(`   - Single Hit Timeout: ${document.singleHitTimeoutFormatted} (${document.singleHitTimeoutMs} ms)`);
 
     let connectedToLiveDb = false;
     try {
