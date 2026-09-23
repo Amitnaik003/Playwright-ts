@@ -2,15 +2,20 @@ import fs from 'fs';
 import path from 'path';
 
 export interface LoadTestMetricsDocument {
-    processId: string;               // Unique Linked Processing ID / Run ID
+    processId: number;               // Unique Numeric Processing ID generated using Date & Time (e.g. 20260922123512)
     testModule: string;
     timestamp: string;
     startedDateTime: string;         // Started Date and Time
     endedDateTime: string;           // Ended Date and Time
     concurrencyLevel: number;        // Concurrency Level (Simultaneous Parallel Hits)
-    totalHits: number;               // Total Hits
-    passed200OK: number;             // Passed (200 OK)
-    failedHitsCount: number;         // Failed Hits Number
+    totalTargetExpectedHits: number; // Planned Target Hits (e.g. 15 Endpoints x 100 Hits x 1 Cycle = 1500)
+    totalHitsFired: number;          // Total Direct Hits Actually Fired (e.g. 900)
+    totalHits: number;               // Total Hits Fired
+    passed: number;                  // Total Passed Hits (200 OK)
+    failedHitsCount: number;         // Total Failed Hits Number
+    failedSingleHitTimeoutCount: number; // Failed hits count specifically due to Single Hit Timeout
+    failedMaxExecutionTimeCount: number; // Failed hits count specifically due to Max Execution Time Limit
+    untriggeredSkippedHitsCount: number; // Hits Skipped/Not Triggered due to 30s Time Limit (e.g. 600)
     timedOutOver45s: number;         // Timed Out (>45s)
     successRate: string;             // Success Rate (e.g. "98.50%")
     avgLatencyMs: number;            // Avg Latency (in ms)
@@ -37,16 +42,18 @@ export interface FailedHitDetail {
     success: boolean;
     payloadSizeBytes?: number;
     error: string | null;
+    failureReason?: 'SINGLE_HIT_TIMEOUT_EXCEEDED' | 'MAX_EXECUTION_TIME_EXCEEDED' | 'HTTP_ERROR' | string;
 }
 
 export interface LoadTestErrorLogDocument {
-    processId: string;               // Linked Processing ID matching master_load_metrics
+    processId: number;               // Linked Numeric Processing ID (e.g. 20260922123512)
     testModule: string;
     hitId: number;
     apiUrl: string;
     status: number;
     responseTimeMs: number;
     error: string;
+    failureReason: string;           // Reason: SINGLE_HIT_TIMEOUT_EXCEEDED | MAX_EXECUTION_TIME_EXCEEDED | HTTP_ERROR
     timestamp: string;
     mongoDbUriUsed?: string;
 }
@@ -87,29 +94,39 @@ export function extractDatabaseName(mongoUri: string): string {
 }
 
 /**
- * Generates a unique, standardized Processing ID for linking metrics and error logs across MongoDB
+ * Generates a unique numeric Processing ID derived from Date & Time (YYYYMMDDHHMMSS)
  */
-export function generateProcessId(prefix: string = 'PROC-LOAD'): string {
-    const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    return `${prefix}-${timestamp}-${randomSuffix}`;
+export function generateProcessId(prefix: string = 'master'): number {
+    const now = new Date();
+    const YYYY = now.getFullYear();
+    const MM = String(now.getMonth() + 1).padStart(2, '0');
+    const DD = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    return Number(`${YYYY}${MM}${DD}${hh}${mm}${ss}`);
 }
 
 /**
  * Saves performance load test summary metrics ONLY to MongoDB database via Connection String,
- * stamped with a unique Processing ID and Started/Ended Date Times.
+ * stamped with a unique numeric Processing ID generated using Date & Time.
  */
 export async function saveMetricsToMongoDB(
     connectionString: string | undefined,
     metrics: {
-        processId?: string;
+        processId?: number | string;
         testModule?: string;
         startedDateTime?: string;
         endedDateTime?: string;
         concurrencyLevel: number;
+        totalTargetExpectedHits?: number;
+        totalHitsFired?: number;
         totalHits: number;
-        passed200OK: number;
+        passed: number;
         failedHitsCount?: number;
+        failedSingleHitTimeoutCount?: number;
+        failedMaxExecutionTimeCount?: number;
+        untriggeredSkippedHitsCount?: number;
         timedOutOver45s: number;
         avgLatencyMs: number;
         p95LatencyMs: number;
@@ -126,15 +143,24 @@ export async function saveMetricsToMongoDB(
     const maskedUri = mongoUri.replace(/:([^@]+)@/, ':****@');
     const targetDbName = extractDatabaseName(mongoUri);
 
-    const activeProcessId = metrics.processId || generateProcessId('PROC-MASTER');
+    const activeProcessId = metrics.processId !== undefined ? Number(metrics.processId) : generateProcessId('master');
 
-    const total = metrics.totalHits || 1;
-    const rateNumber = ((metrics.passed200OK / total) * 100);
+    const passedHits = metrics.passed !== undefined ? metrics.passed : 0;
+
+    const totalFired = metrics.totalHitsFired !== undefined ? metrics.totalHitsFired : metrics.totalHits;
+    const targetExpected = metrics.totalTargetExpectedHits !== undefined ? metrics.totalTargetExpectedHits : totalFired;
+    const skippedCount = metrics.untriggeredSkippedHitsCount !== undefined ? metrics.untriggeredSkippedHitsCount : Math.max(0, targetExpected - totalFired);
+
+    const total = totalFired || 1;
+    const rateNumber = ((passedHits / total) * 100);
     const successRateStr = `${rateNumber.toFixed(2)}%`;
 
     const failedCount = metrics.failedHitsCount !== undefined
         ? metrics.failedHitsCount
-        : Math.max(0, metrics.totalHits - metrics.passed200OK);
+        : Math.max(0, totalFired - passedHits);
+
+    const failedSingleHit = metrics.failedSingleHitTimeoutCount || 0;
+    const failedMaxExec = metrics.failedMaxExecutionTimeCount || 0;
 
     const maxExecSec = metrics.maxExecutionTimeSeconds !== undefined
         ? metrics.maxExecutionTimeSeconds
@@ -156,9 +182,14 @@ export async function saveMetricsToMongoDB(
         startedDateTime: metrics.startedDateTime || nowIso,
         endedDateTime: metrics.endedDateTime || nowIso,
         concurrencyLevel: metrics.concurrencyLevel,
-        totalHits: metrics.totalHits,
-        passed200OK: metrics.passed200OK,
+        totalTargetExpectedHits: targetExpected,
+        totalHitsFired: totalFired,
+        totalHits: totalFired,
+        passed: passedHits,
         failedHitsCount: failedCount,
+        failedSingleHitTimeoutCount: failedSingleHit,
+        failedMaxExecutionTimeCount: failedMaxExec,
+        untriggeredSkippedHitsCount: skippedCount,
         timedOutOver45s: metrics.timedOutOver45s,
         successRate: successRateStr,
         avgLatencyMs: metrics.avgLatencyMs,
@@ -183,17 +214,21 @@ export async function saveMetricsToMongoDB(
     console.log(` Connection String : ${maskedUri}`);
     console.log(` Target Database   : "${targetDbName}"`);
     console.log(` Target Collection : "${collectionName}"`);
-    console.log(` Linked Processing ID : ${document.processId}`);
+    console.log(` Processing ID     : ${document.processId}`);
     console.log(` Summary Metrics Details :`);
-    console.log(`   - Concurrency Level : ${document.concurrencyLevel}`);
-    console.log(`   - Total Hits        : ${document.totalHits}`);
-    console.log(`   - Passed (200 OK)   : ${document.passed200OK}`);
-    console.log(`   - Failed Hits       : ${document.failedHitsCount}`);
-    console.log(`   - Timed Out (>45s)  : ${document.timedOutOver45s}`);
-    console.log(`   - Success Rate      : ${document.successRate}`);
-    console.log(`   - Avg Latency       : ${document.avgLatencyFormatted}`);
-    console.log(`   - P95 Latency       : ${document.p95LatencyFormatted}`);
-    console.log(`   - Single Hit Timeout: ${document.singleHitTimeoutFormatted} (${document.singleHitTimeoutMs} ms)`);
+    console.log(`   - Concurrency Level        : ${document.concurrencyLevel}`);
+    console.log(`   - Target Expected Hits     : ${document.totalTargetExpectedHits}`);
+    console.log(`   - Total Hits Fired         : ${document.totalHitsFired}`);
+    console.log(`   - Passed                   : ${document.passed}`);
+    console.log(`   - Failed Hits              : ${document.failedHitsCount}`);
+    console.log(`     * Failed Single Hit T/O  : ${document.failedSingleHitTimeoutCount}`);
+    console.log(`     * Failed Max Exec Time   : ${document.failedMaxExecutionTimeCount}`);
+    console.log(`   - Skipped Hits (30s Limit) : ${document.untriggeredSkippedHitsCount}`);
+    console.log(`   - Timed Out (>45s)         : ${document.timedOutOver45s}`);
+    console.log(`   - Success Rate             : ${document.successRate}`);
+    console.log(`   - Avg Latency              : ${document.avgLatencyFormatted}`);
+    console.log(`   - P95 Latency              : ${document.p95LatencyFormatted}`);
+    console.log(`   - Single Hit Timeout       : ${document.singleHitTimeoutFormatted} (${document.singleHitTimeoutMs} ms)`);
 
     let connectedToLiveDb = false;
     try {
@@ -230,11 +265,11 @@ export async function saveMetricsToMongoDB(
 
 /**
  * Saves detailed error hit logs ONLY to the SAME MongoDB Cluster in collection "master_load_error_logs",
- * linked directly by the SAME Processing ID.
+ * linked directly by the SAME numeric Processing ID.
  */
 export async function saveErrorLogsToMongoDB(
     connectionString: string | undefined,
-    processId: string,
+    processId: number | string,
     failedHits: FailedHitDetail[],
     testModule: string = 'Master Pages Backend REST API Load Test',
     collectionName: string = 'master_load_error_logs'
@@ -248,14 +283,17 @@ export async function saveErrorLogsToMongoDB(
     const maskedUri = mongoUri.replace(/:([^@]+)@/, ':****@');
     const targetDbName = extractDatabaseName(mongoUri);
 
+    const numericProcessId = Number(processId);
+
     const errorDocuments: LoadTestErrorLogDocument[] = failedHits.map(hit => ({
-        processId,
+        processId: numericProcessId,
         testModule,
         hitId: hit.id,
         apiUrl: hit.apiUrl,
         status: hit.status,
         responseTimeMs: hit.responseTimeMs,
         error: hit.error || 'Unknown Error',
+        failureReason: hit.failureReason || 'HTTP_ERROR',
         timestamp: new Date().toISOString(),
         mongoDbUriUsed: maskedUri
     }));
@@ -266,7 +304,7 @@ export async function saveErrorLogsToMongoDB(
     console.log(` Connection String : ${maskedUri}`);
     console.log(` Target Database   : "${targetDbName}"`);
     console.log(` Target Collection : "${collectionName}"`);
-    console.log(` Linked Processing ID : ${processId}`);
+    console.log(` Linked Processing ID : ${numericProcessId}`);
     console.log(` Total Error Documents : ${errorDocuments.length}`);
 
     let connectedToLiveDb = false;

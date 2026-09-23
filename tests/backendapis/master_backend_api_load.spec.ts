@@ -47,12 +47,13 @@ interface HitResult {
     success: boolean;
     payloadSizeBytes: number;
     error: string | null;
+    failureReason?: 'SINGLE_HIT_TIMEOUT_EXCEEDED' | 'MAX_EXECUTION_TIME_EXCEEDED' | 'HTTP_ERROR' | string;
 }
 
 test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
     test.setTimeout(0);
     let testStartedAt = Date.now();
-    const processId = generateProcessId('PROC-MASTER');
+    const processId = generateProcessId('master');
 
     console.log('================================================================================');
     console.log(` PHASE 1: STRICT UI LOGIN & INTERCEPTING MASTER PAGES REST APIs (Processing ID: ${processId})`);
@@ -319,7 +320,8 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
                             responseTimeMs: 0,
                             success: false,
                             payloadSizeBytes: 0,
-                            error: 'Execution time limit reached (MAX_EXECUTION_TIME_MS 30s exceeded)'
+                            error: 'Max execution time limit reached (MAX_EXECUTION_TIME_MS 30s exceeded)',
+                            failureReason: 'MAX_EXECUTION_TIME_EXCEEDED'
                         };
                     }
 
@@ -348,13 +350,17 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
                             responseTimeMs,
                             success: isSuccess,
                             payloadSizeBytes,
-                            error: isSuccess ? null : `HTTP Status ${status}`
+                            error: isSuccess ? null : `HTTP Status ${status}`,
+                            ...(isSuccess ? {} : { failureReason: 'HTTP_ERROR' })
                         };
                     } catch (err) {
                         const rawError = err instanceof Error ? err.message : String(err);
                         const cleanError = rawError.includes('Timeout')
                             ? (rawError.match(/Timeout \d+ms exceeded/i)?.[0] || 'Timeout exceeded')
                             : rawError.split('\n')[0].replace(/\u001b\[\d+m/g, '').trim();
+
+                        const isMaxExec = (remainingTimeMs < singleHitTimeoutMs && cleanError.includes('Timeout')) || cleanError.includes('MAX_EXECUTION_TIME');
+                        const failureReason = isMaxExec ? 'MAX_EXECUTION_TIME_EXCEEDED' : (cleanError.includes('Timeout') ? 'SINGLE_HIT_TIMEOUT_EXCEEDED' : 'HTTP_ERROR');
 
                         return {
                             id: hitId,
@@ -363,7 +369,8 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
                             responseTimeMs: Date.now() - startTime,
                             success: false,
                             payloadSizeBytes: 0,
-                            error: cleanError
+                            error: cleanError,
+                            failureReason
                         };
                     }
                 })
@@ -390,21 +397,32 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
     const p95Time = sortedTimes.length ? sortedTimes[Math.floor(sortedTimes.length * 0.95)] || maxTime : 0;
 
     const failedHits = allResults.filter(r => !r.success);
+    const failedSingleHitTimeoutCount = allResults.filter(r => r.failureReason === 'SINGLE_HIT_TIMEOUT_EXCEEDED').length;
+    const failedMaxExecutionTimeCount = allResults.filter(r => r.failureReason === 'MAX_EXECUTION_TIME_EXCEEDED').length;
+
+    const totalTargetExpectedHits = capturedApiList.length * hitCount * repeatCount;
+    const untriggeredSkippedHitsCount = Math.max(0, totalTargetExpectedHits - totalHitsFired);
 
     const reportContent = `================================================================================
             MASTER PAGES BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT             
 ================================================================================
-Target Master Backend APIs:     ${capturedApiList.length} Endpoints
-Total Simultaneous Hits/API:    ${hitCount}
-Repeat Cycles Executed:         ${repeatCount}
-Total Direct REST API Hits:     ${totalHitsFired} hits
-Total Successful Responses:     ${totalSuccessfulHits} (200/304/204 OK)
-Total Failed Hits (Failed Num): ${failedHits.length} hits
-Total Execution Time:           ${(testExecutionTimeMs / 1000).toFixed(2)} seconds
-Min Response Latency:           ${minTime} ms
-Average Response Latency:       ${avgTime} ms
-Max Response Latency:           ${maxTime} ms
-P95 Response Latency:           ${p95Time} ms
+Target Master Backend APIs:            ${capturedApiList.length} Endpoints
+Total Simultaneous Hits/API:           ${hitCount}
+Repeat Cycles Executed:                ${repeatCount}
+Target Expected Total Hits:            ${totalTargetExpectedHits} hits
+--------------------------------------------------------------------------------
+Total Direct REST API Hits Fired:      ${totalHitsFired} hits
+  - Total Successful Responses:        ${totalSuccessfulHits} (200/304/204 OK)
+  - Total Failed Hits (Failed Num):    ${failedHits.length} hits
+      * Failed via Single Hit Timeout: ${failedSingleHitTimeoutCount} hits
+      * Failed via Max Execution Time: ${failedMaxExecutionTimeCount} hits
+Total Hits Skipped (30s Time Limit):   ${untriggeredSkippedHitsCount} hits
+--------------------------------------------------------------------------------
+Total Execution Time:                  ${(testExecutionTimeMs / 1000).toFixed(2)} seconds (${testExecutionTimeMs} ms)
+Min Response Latency:                  ${minTime} ms
+Average Response Latency:              ${avgTime} ms
+Max Response Latency:                  ${maxTime} ms
+P95 Response Latency:                  ${p95Time} ms
 ================================================================================`;
 
     console.log(`\n` + reportContent + `\n`);
@@ -426,9 +444,14 @@ P95 Response Latency:           ${p95Time} ms
         startedDateTime,
         endedDateTime,
         concurrencyLevel: hitCount,
+        totalTargetExpectedHits,
+        totalHitsFired,
         totalHits: totalHitsFired,
-        passed200OK: totalSuccessfulHits,
+        passed: totalSuccessfulHits,
         failedHitsCount: failedHits.length,
+        failedSingleHitTimeoutCount,
+        failedMaxExecutionTimeCount,
+        untriggeredSkippedHitsCount,
         timedOutOver45s: timedOutCount,
         avgLatencyMs: avgTime,
         p95LatencyMs: p95Time,

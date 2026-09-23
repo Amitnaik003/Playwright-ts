@@ -34,12 +34,13 @@ interface HitResult {
     success: boolean;
     payloadSizeBytes: number;
     error: string | null;
+    failureReason?: 'SINGLE_HIT_TIMEOUT_EXCEEDED' | 'MAX_EXECUTION_TIME_EXCEEDED' | 'HTTP_ERROR' | string;
 }
 
 test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
     test.setTimeout(0);
     let testStartedAt = Date.now();
-    const processId = generateProcessId('PROC-ALL');
+    const processId = generateProcessId('all_modules');
 
     console.log('================================================================================');
     console.log(' PHASE 1: STRICT UI LOGIN & INTERCEPTING REAL BACKEND REST API ENDPOINTS         ');
@@ -55,7 +56,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
     let authHeader = '';
     let isLoggedIn = false;
 
-    // Listen to network responses to capture true JSON/REST API calls fired by frontend Angular app
+    // Listen to network requests to capture true JSON/REST API calls
     setupPage.on('request', request => {
         const method = request.method();
         if (method === 'OPTIONS') return;
@@ -152,7 +153,6 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
     await setupPage.waitForLoadState('networkidle').catch(() => { });
     await context.storageState({ path: authFile }).catch(() => { });
 
-    // Extract auth token from localStorage / sessionStorage after login
     const storageToken = await setupPage.evaluate(() => {
         const findToken = (val: string | null): string | null => {
             if (!val) return null;
@@ -192,24 +192,29 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
         console.log(`[Captured Storage Auth Token] ${authHeader.substring(0, 35)}...`);
     }
 
-    // Mark user as logged in and clear pre-login unauthenticated APIs
     isLoggedIn = true;
     interceptedApis.clear();
 
-    console.log(`[Strict UI Login Success] Logged in. Navigating target module pages to trigger backend APIs...`);
+    console.log(`[Strict UI Login Success] Logged in. Navigating target pages to trigger backend APIs...`);
 
-    // Navigate to key module pages to trigger full set of backend API calls
-    const targetPages = [
+    const allTargetPages = [
+        '/appcommon/enterprise',
+        '/appcommon/orgUnit',
+        '/appcommon/plant',
+        '/appcommon/customerparent',
+        '/appcommon/group',
+        '/appcommon/user',
+        '/appcommon/position',
+        '/appcommon/programs',
+        '/appcommon/external-filter',
+        '/appcommon/portal',
         '/appcommon/dashboard',
-        '/appcommon/ProcessMonitor',
-        '/appcommon/report-config',
-        '/appcommon/plantcustomerref',
         '/appcommon/user-profile',
         '/appcommon/help/mastermain',
         '/appcommon/ticketing-system'
     ];
 
-    for (const pagePath of targetPages) {
+    for (const pagePath of allTargetPages) {
         const fullUrl = `${targetUrl.replace(/\/$/, '')}${pagePath}`;
         await setupPage.goto(fullUrl, { waitUntil: 'networkidle' }).catch(() => { });
         await setupPage.waitForTimeout(1000);
@@ -227,16 +232,10 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
         console.log(` [API ${idx + 1}] ${api.method} -> ${api.url}`);
     });
 
-    // Fallback if no XHR endpoints captured during initial load: populate primary backend API candidate routes
     if (capturedApiList.length === 0) {
         console.log('[Notice] Standard static routes captured. Adding core backend API service endpoints...');
         const cleanBase = targetUrl.replace(/\/$/, '');
-        const fallbackUrls = [
-            `${cleanBase}/appcommon/ProcessMonitor`,
-            `${cleanBase}/appcommon/report-config`,
-            `${cleanBase}/appcommon/plantcustomerref`,
-            `${cleanBase}/appcommon/dashboard`
-        ];
+        const fallbackUrls = allTargetPages.map(p => `${cleanBase}${p}`);
         fallbackUrls.forEach(url => {
             capturedApiList.push({
                 url,
@@ -250,7 +249,6 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
     console.log(` PHASE 2: EXECUTING PARALLEL PROMISE.ALL() PER API SEQUENTIALLY ONE AFTER ANOTHER`);
     console.log('================================================================================\n');
 
-    // Reset execution timer so it starts strictly from the 1st REST API triggering point after Phase 1 setup
     testStartedAt = Date.now();
     console.log(`[EXECUTION TIMER STARTED] 1st API Triggering Point Started at: ${new Date(testStartedAt).toISOString()}`);
     console.log(`[TIMING CONFIRMED] Execution duration limit (${(maxExecutionTimeMs / 1000).toFixed(2)}s) will count strictly from this moment.\n`);
@@ -289,7 +287,6 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
 
             const orderStartTime = Date.now();
 
-            // Construct clean request headers stripping browser Host, Content-Length & Cookie headers
             const apiRequestHeaders: Record<string, string> = { ...defaultHeaders };
             for (const [k, v] of Object.entries(targetApi.headers || {})) {
                 const lowerK = k.toLowerCase();
@@ -319,7 +316,8 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
                             responseTimeMs: 0,
                             success: false,
                             payloadSizeBytes: 0,
-                            error: 'Execution time limit reached (MAX_EXECUTION_TIME_MS 30s exceeded)'
+                            error: 'Max execution time limit reached (MAX_EXECUTION_TIME_MS 30s exceeded)',
+                            failureReason: 'MAX_EXECUTION_TIME_EXCEEDED'
                         };
                     }
 
@@ -348,13 +346,17 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
                             responseTimeMs,
                             success: isSuccess,
                             payloadSizeBytes,
-                            error: isSuccess ? null : `HTTP Status ${status}`
+                            error: isSuccess ? null : `HTTP Status ${status}`,
+                            ...(isSuccess ? {} : { failureReason: 'HTTP_ERROR' })
                         };
                     } catch (err) {
                         const rawError = err instanceof Error ? err.message : String(err);
                         const cleanError = rawError.includes('Timeout')
                             ? (rawError.match(/Timeout \d+ms exceeded/i)?.[0] || 'Timeout exceeded')
                             : rawError.split('\n')[0].replace(/\u001b\[\d+m/g, '').trim();
+
+                        const isMaxExec = (remainingTimeMs < singleHitTimeoutMs && cleanError.includes('Timeout')) || cleanError.includes('MAX_EXECUTION_TIME');
+                        const failureReason = isMaxExec ? 'MAX_EXECUTION_TIME_EXCEEDED' : (cleanError.includes('Timeout') ? 'SINGLE_HIT_TIMEOUT_EXCEEDED' : 'HTTP_ERROR');
 
                         return {
                             id: hitId,
@@ -363,7 +365,8 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
                             responseTimeMs: Date.now() - startTime,
                             success: false,
                             payloadSizeBytes: 0,
-                            error: cleanError
+                            error: cleanError,
+                            failureReason
                         };
                     }
                 })
@@ -390,21 +393,32 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
     const p95Time = sortedTimes.length ? sortedTimes[Math.floor(sortedTimes.length * 0.95)] || maxTime : 0;
 
     const failedHits = allResults.filter(r => !r.success);
+    const failedSingleHitTimeoutCount = allResults.filter(r => r.failureReason === 'SINGLE_HIT_TIMEOUT_EXCEEDED').length;
+    const failedMaxExecutionTimeCount = allResults.filter(r => r.failureReason === 'MAX_EXECUTION_TIME_EXCEEDED').length;
+
+    const totalTargetExpectedHits = capturedApiList.length * hitCount * repeatCount;
+    const untriggeredSkippedHitsCount = Math.max(0, totalTargetExpectedHits - totalHitsFired);
 
     const reportContent = `================================================================================
     BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT
 ================================================================================
-Target Backend APIs Tested:     ${capturedApiList.length} Endpoints
-Total Simultaneous Hits/API:    ${hitCount}
-Repeat Cycles Executed:         ${repeatCount}
-Total Direct REST API Hits:     ${totalHitsFired} hits
-Total Successful Responses:     ${totalSuccessfulHits} (200/304 OK)
-Total Failed Hits (Failed Num): ${failedHits.length} hits
-Total Execution Time:           ${(testExecutionTimeMs / 1000).toFixed(2)} seconds
-Min Response Latency:           ${minTime} ms
-Average Response Latency:       ${avgTime} ms
-Max Response Latency:           ${maxTime} ms
-P95 Response Latency:           ${p95Time} ms
+Target Backend APIs Tested:            ${capturedApiList.length} Endpoints
+Total Simultaneous Hits/API:           ${hitCount}
+Repeat Cycles Executed:                ${repeatCount}
+Target Expected Total Hits:            ${totalTargetExpectedHits} hits
+--------------------------------------------------------------------------------
+Total Direct REST API Hits Fired:      ${totalHitsFired} hits
+  - Total Successful Responses:        ${totalSuccessfulHits} (200/304 OK)
+  - Total Failed Hits (Failed Num):    ${failedHits.length} hits
+      * Failed via Single Hit Timeout: ${failedSingleHitTimeoutCount} hits
+      * Failed via Max Execution Time: ${failedMaxExecutionTimeCount} hits
+Total Hits Skipped (30s Time Limit):   ${untriggeredSkippedHitsCount} hits
+--------------------------------------------------------------------------------
+Total Execution Time:                  ${(testExecutionTimeMs / 1000).toFixed(2)} seconds (${testExecutionTimeMs} ms)
+Min Response Latency:                  ${minTime} ms
+Average Response Latency:              ${avgTime} ms
+Max Response Latency:                  ${maxTime} ms
+P95 Response Latency:                  ${p95Time} ms
 ================================================================================`;
 
     console.log(`\n` + reportContent + `\n`);
@@ -426,9 +440,14 @@ P95 Response Latency:           ${p95Time} ms
         startedDateTime,
         endedDateTime,
         concurrencyLevel: hitCount,
+        totalTargetExpectedHits,
+        totalHitsFired,
         totalHits: totalHitsFired,
-        passed200OK: totalSuccessfulHits,
+        passed: totalSuccessfulHits,
         failedHitsCount: failedHits.length,
+        failedSingleHitTimeoutCount,
+        failedMaxExecutionTimeCount,
+        untriggeredSkippedHitsCount,
         timedOutOver45s: timedOutCount,
         avgLatencyMs: avgTime,
         p95LatencyMs: p95Time,
