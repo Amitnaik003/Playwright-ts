@@ -30,7 +30,6 @@ export interface LoadTestMetricsDocument {
     singleHitTimeoutMs: number;      // Single Hit Request Timeout in ms (e.g. 10000)
     singleHitTimeoutSeconds: number; // Single Hit Request Timeout in seconds (e.g. 10)
     singleHitTimeoutFormatted: string; // e.g. "10 sec"
-    mongoDbUriUsed?: string;         // Masked Connection String
     status: string;                  // Execution Status: SUCCESS | WARNING
 }
 
@@ -55,7 +54,6 @@ export interface LoadTestErrorLogDocument {
     error: string;
     failureReason: string;           // Reason: SINGLE_HIT_TIMEOUT_EXCEEDED | MAX_EXECUTION_TIME_EXCEEDED | HTTP_ERROR
     timestamp: string;
-    mongoDbUriUsed?: string;
 }
 
 /**
@@ -204,7 +202,6 @@ export async function saveMetricsToMongoDB(
         singleHitTimeoutMs: singleHitMs,
         singleHitTimeoutSeconds: singleHitSec,
         singleHitTimeoutFormatted: `${singleHitSec} sec`,
-        mongoDbUriUsed: maskedUri,
         status: rateNumber >= 90 ? 'SUCCESS' : 'WARNING'
     };
 
@@ -294,8 +291,7 @@ export async function saveErrorLogsToMongoDB(
         responseTimeMs: hit.responseTimeMs,
         error: hit.error || 'Unknown Error',
         failureReason: hit.failureReason || 'HTTP_ERROR',
-        timestamp: new Date().toISOString(),
-        mongoDbUriUsed: maskedUri
+        timestamp: new Date().toISOString()
     }));
 
     console.log(`\n================================================================================`);
