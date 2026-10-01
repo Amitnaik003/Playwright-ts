@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const targetUrl = process.env.QA_BASE_URL || process.env.BASE_URL || 'https://gentle-bush-00806120f.2.azurestaticapps.net/';
-const userId = process.env.QA_USER_ID || 'superadminmartinrea1@martinrea.com';
+const userId = process.env.QA_USER_ID || 'superminmartinrea1@martinrea.com';
 const password = process.env.QA_PASSWORD || 'Qatest@123';
 const repeatCount = Number(process.env.CYCLE_COUNT || 1);
 const hitCount = Number(process.env.TAB_COUNT || 50);
