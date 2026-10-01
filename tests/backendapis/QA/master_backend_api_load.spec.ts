@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { getPerformanceMetrics, attachPerformanceMetrics } from '../utils/perfMeter';
-import { saveMetricsToMongoDB, saveErrorLogsToMongoDB, generateProcessId } from '../utils/mongoSaver';
+import { getPerformanceMetrics, attachPerformanceMetrics } from '../../utils/perfMeter';
+import { saveMetricsToMongoDB, saveErrorLogsToMongoDB, generateProcessId } from '../../utils/mongoSaver';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const targetUrl = process.env.BASE_URL || 'https://polite-pond-09fb16200.7.azurestaticapps.net/';
-const userId = process.env.USER_ID || 'superadminmartinrea1@martinrea.com';
-const password = process.env.PASSWORD || 'Dell@1234';
+const targetUrl = process.env.QA_BASE_URL || process.env.BASE_URL || 'https://gentle-bush-00806120f.2.azurestaticapps.net/';
+const userId = process.env.QA_USER_ID || 'superadminmartinrea1@martinrea.com';
+const password = process.env.QA_PASSWORD || 'Qatest@123';
 const repeatCount = Number(process.env.CYCLE_COUNT || 1);
 const hitCount = Number(process.env.TAB_COUNT || 50);
 const maxExecutionTimeMs = Number(process.env.MAX_EXECUTION_TIME_MS || process.env.TEST_TIMEOUT_MS || 120000);
@@ -50,13 +50,13 @@ interface HitResult {
     failureReason?: 'SINGLE_HIT_TIMEOUT_EXCEEDED' | 'MAX_EXECUTION_TIME_EXCEEDED' | 'HTTP_ERROR' | string;
 }
 
-test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
+test(`QA Master Pages Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
     test.setTimeout(0);
     let testStartedAt = Date.now();
-    const processId = generateProcessId('master');
+    const processId = generateProcessId('qa_master');
 
     console.log('================================================================================');
-    console.log(` PHASE 1: STRICT UI LOGIN & INTERCEPTING MASTER PAGES REST APIs (Processing ID: ${processId})`);
+    console.log(` PHASE 1: STRICT UI LOGIN & INTERCEPTING QA MASTER PAGES REST APIs (Processing ID: ${processId})`);
     console.log('================================================================================');
 
     const context = await browser.newContext({
@@ -72,7 +72,6 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
     // Listen to network requests & responses to capture true JSON/REST API calls fired by Master Pages
     setupPage.on('request', request => {
         const method = request.method();
-        // Ignore CORS preflight OPTIONS requests
         if (method === 'OPTIONS') return;
 
         const reqUrl = request.url();
@@ -97,7 +96,7 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
                     headers: headers,
                     postData: postData
                 });
-                console.log(`[Captured Master Backend API] ${method} ${reqUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
+                console.log(`[Captured QA Master Backend API] ${method} ${reqUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
             }
         }
     });
@@ -145,7 +144,7 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
                     headers: req.headers(),
                     postData: postData
                 });
-                console.log(`[Captured Master Backend JSON API] ${reqMethod} ${resUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
+                console.log(`[Captured QA Master Backend JSON API] ${reqMethod} ${resUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
             }
         }
     });
@@ -208,13 +207,11 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
         console.log(`[Captured Storage Auth Token] ${authHeader.substring(0, 35)}...`);
     }
 
-    // Mark user as logged in and clear pre-login unauthenticated APIs
     isLoggedIn = true;
     interceptedApis.clear();
 
-    console.log(`[Strict UI Login Success] Logged in. Navigating Master Pages to trigger backend APIs...`);
+    console.log(`[Strict UI Login Success] Logged in. Navigating QA Master Pages to trigger backend APIs...`);
 
-    // Navigate to Master pages to trigger full set of authenticated backend API calls
     for (const pagePath of masterTargetPages) {
         const fullUrl = `${targetUrl.replace(/\/$/, '')}${pagePath}`;
         await setupPage.goto(fullUrl, { waitUntil: 'networkidle' }).catch(() => { });
@@ -227,15 +224,14 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
     const capturedApiList = Array.from(interceptedApis.values());
 
     console.log('\n================================================================================');
-    console.log(` PHASE 1 COMPLETE: Captured ${capturedApiList.length} Real Master Backend REST APIs!`);
+    console.log(` PHASE 1 COMPLETE: Captured ${capturedApiList.length} Real QA Master Backend REST APIs!`);
     console.log('================================================================================');
     capturedApiList.forEach((api, idx) => {
-        console.log(` [Master API ${idx + 1}] ${api.method} -> ${api.url}`);
+        console.log(` [QA Master API ${idx + 1}] ${api.method} -> ${api.url}`);
     });
 
-    // Fallback if no XHR endpoints captured during initial load
     if (capturedApiList.length === 0) {
-        console.log('[Notice] Standard static routes captured. Adding core Master backend API service endpoints...');
+        console.log('[Notice] Standard static routes captured. Adding core QA Master backend API service endpoints...');
         const cleanBase = targetUrl.replace(/\/$/, '');
         const fallbackUrls = masterTargetPages.map(p => `${cleanBase}${p}`);
         fallbackUrls.forEach(url => {
@@ -248,10 +244,9 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
     }
 
     console.log('\n================================================================================');
-    console.log(` PHASE 2: EXECUTING PARALLEL PROMISE.ALL() PER MASTER API SEQUENTIALLY ONE AFTER ANOTHER`);
+    console.log(` PHASE 2: EXECUTING PARALLEL PROMISE.ALL() PER QA MASTER API SEQUENTIALLY ONE AFTER ANOTHER`);
     console.log('================================================================================\n');
 
-    // Reset execution timer so it starts strictly from the 1st REST API triggering point after Phase 1 setup
     testStartedAt = Date.now();
     console.log(`[EXECUTION TIMER STARTED] 1st API Triggering Point Started at: ${new Date(testStartedAt).toISOString()}`);
     console.log(`[TIMING CONFIRMED] Execution duration limit (${(maxExecutionTimeMs / 1000).toFixed(2)}s) will count strictly from this moment.\n`);
@@ -271,7 +266,7 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
         }
 
         console.log(`==================================================`);
-        console.log(` Starting Master Synchronized Cycle [${cycle}/${repeatCount}] (Elapsed: ${(currentElapsedMs / 1000).toFixed(2)}s / ${(maxExecutionTimeMs / 1000).toFixed(2)}s)`);
+        console.log(` Starting QA Master Synchronized Cycle [${cycle}/${repeatCount}] (Elapsed: ${(currentElapsedMs / 1000).toFixed(2)}s / ${(maxExecutionTimeMs / 1000).toFixed(2)}s)`);
         console.log(`==================================================`);
 
         for (let i = 0; i < capturedApiList.length; i++) {
@@ -285,12 +280,11 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
             const apiOrder = i + 1;
 
             console.log(`\n--------------------------------------------------------------------------------`);
-            console.log(` [Cycle ${cycle}/${repeatCount}] [Master API ${apiOrder}/${capturedApiList.length}] Firing ${hitCount} Parallel Hits via Promise.all() -> ${targetApi.url}`);
+            console.log(` [Cycle ${cycle}/${repeatCount}] [QA Master API ${apiOrder}/${capturedApiList.length}] Firing ${hitCount} Parallel Hits via Promise.all() -> ${targetApi.url}`);
             console.log(`--------------------------------------------------------------------------------`);
 
             const orderStartTime = Date.now();
 
-            // Construct clean request headers stripping browser Host, Content-Length & Cookie headers
             const apiRequestHeaders: Record<string, string> = { ...defaultHeaders };
             for (const [k, v] of Object.entries(targetApi.headers || {})) {
                 const lowerK = k.toLowerCase();
@@ -341,7 +335,7 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
                         const status = response.status();
                         const isSuccess = response.ok() || status === 200 || status === 304 || status === 204;
 
-                        console.log(`[Master API ${apiOrder}/${capturedApiList.length}] [Hit ${hitId}/${hitCount}] Status: ${status} (${response.statusText() || 'OK'}) | Response Time: ${responseTimeMs}ms | Size: ${payloadSizeBytes} B`);
+                        console.log(`[QA Master API ${apiOrder}/${capturedApiList.length}] [Hit ${hitId}/${hitCount}] Status: ${status} (${response.statusText() || 'OK'}) | Response Time: ${responseTimeMs}ms | Size: ${payloadSizeBytes} B`);
 
                         return {
                             id: hitId,
@@ -383,7 +377,7 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
             totalHitsFired += hitCount;
             totalSuccessfulHits += successHits;
 
-            console.log(`[Master API ${apiOrder}/${capturedApiList.length} Finished] ${successHits}/${hitCount} parallel hits completed via Promise.all() in ${orderDurationMs}ms (${(orderDurationMs / 1000).toFixed(2)}s). Moving to next API...`);
+            console.log(`[QA Master API ${apiOrder}/${capturedApiList.length} Finished] ${successHits}/${hitCount} parallel hits completed via Promise.all() in ${orderDurationMs}ms (${(orderDurationMs / 1000).toFixed(2)}s). Moving to next API...`);
         }
     }
 
@@ -404,9 +398,9 @@ test(`Master Pages Backend REST API Load Test - Real Azure App Service Spikes ($
     const untriggeredSkippedHitsCount = Math.max(0, totalTargetExpectedHits - totalHitsFired);
 
     const reportContent = `================================================================================
-            MASTER PAGES BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT             
+          QA MASTER PAGES BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT             
 ================================================================================
-Target Master Backend APIs:            ${capturedApiList.length} Endpoints
+Target QA Master Backend APIs:         ${capturedApiList.length} Endpoints
 Total Simultaneous Hits/API:           ${hitCount}
 Repeat Cycles Executed:                ${repeatCount}
 Target Expected Total Hits:            ${totalTargetExpectedHits} hits
@@ -428,19 +422,18 @@ P95 Response Latency:                  ${p95Time} ms
     console.log(`\n` + reportContent + `\n`);
 
     testInfo.attachments.push({
-        name: 'Master Backend REST API Load Report.txt',
+        name: 'QA Master Backend REST API Load Report.txt',
         contentType: 'text/plain',
         body: Buffer.from(reportContent, 'utf-8'),
     });
 
-    // Save Execution Summary Metrics & Error Logs strictly to MongoDB Cloud (Linked by processId)
     const timedOutCount = allResults.filter(r => !r.success || r.responseTimeMs >= 45000).length;
     const startedDateTime = new Date(testStartedAt).toISOString();
     const endedDateTime = new Date(testStartedAt + testExecutionTimeMs).toISOString();
 
     await saveMetricsToMongoDB(process.env.MONGODB_URI, {
         processId,
-        testModule: 'Master Pages Backend REST API Load Test',
+        testModule: 'QA Master Pages Backend REST API Load Test',
         startedDateTime,
         endedDateTime,
         concurrencyLevel: hitCount,
@@ -460,16 +453,15 @@ P95 Response Latency:                  ${p95Time} ms
         executionTimeSeconds: Number((testExecutionTimeMs / 1000).toFixed(2)),
         maxExecutionTimeSeconds: Number((maxExecutionTimeMs / 1000).toFixed(2)),
         singleHitTimeoutMs: singleHitTimeoutMs
-    }, 'master_load_metrics');
+    }, 'qa_master_load_metrics');
 
-    // Save error logs to the same MongoDB cluster with the same linked processingId
     if (failedHits.length > 0) {
         await saveErrorLogsToMongoDB(
             process.env.MONGODB_URI,
             processId,
             failedHits,
-            'Master Pages Backend REST API Load Test',
-            'master_load_error_logs'
+            'QA Master Pages Backend REST API Load Test',
+            'qa_master_load_error_logs'
         );
     }
 

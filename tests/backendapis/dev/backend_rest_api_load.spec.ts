@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { getPerformanceMetrics, attachPerformanceMetrics } from '../utils/perfMeter';
-import { saveMetricsToMongoDB, saveErrorLogsToMongoDB, generateProcessId } from '../utils/mongoSaver';
+import { getPerformanceMetrics, attachPerformanceMetrics } from '../../utils/perfMeter';
+import { saveMetricsToMongoDB, saveErrorLogsToMongoDB, generateProcessId } from '../../utils/mongoSaver';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -18,12 +18,6 @@ const defaultHeaders = {
     'Accept': 'application/json, text/plain, */*',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 };
-
-const adminTargetPages = [
-    '/appcommon/user-profile',
-    '/appcommon/help/mastermain',
-    '/appcommon/ticketing-system'
-];
 
 interface InterceptedApi {
     url: string;
@@ -43,13 +37,13 @@ interface HitResult {
     failureReason?: 'SINGLE_HIT_TIMEOUT_EXCEEDED' | 'MAX_EXECUTION_TIME_EXCEEDED' | 'HTTP_ERROR' | string;
 }
 
-test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
+test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
     test.setTimeout(0);
     let testStartedAt = Date.now();
-    const processId = generateProcessId('admin');
+    const processId = generateProcessId('all_modules');
 
     console.log('================================================================================');
-    console.log(' PHASE 1: STRICT UI LOGIN & INTERCEPTING ADMIN BACKEND REST API ENDPOINTS       ');
+    console.log(' PHASE 1: STRICT UI LOGIN & INTERCEPTING REAL BACKEND REST API ENDPOINTS         ');
     console.log('================================================================================');
 
     const context = await browser.newContext({
@@ -62,10 +56,9 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
     let authHeader = '';
     let isLoggedIn = false;
 
-    // Listen to network responses to capture true JSON/REST API calls fired by Admin module
+    // Listen to network requests to capture true JSON/REST API calls
     setupPage.on('request', request => {
         const method = request.method();
-        // Ignore CORS preflight OPTIONS requests
         if (method === 'OPTIONS') return;
 
         const reqUrl = request.url();
@@ -83,7 +76,6 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
             const hasAuth = headers['authorization'] || headers['Authorization'];
             const postData = request.postData();
 
-            // Store API if post-login, or if not previously saved, or if updating with auth/postData
             if (isLoggedIn || !existing || (hasAuth && !existing.headers['authorization']) || (postData && !existing?.postData)) {
                 interceptedApis.set(reqUrl, {
                     url: reqUrl,
@@ -91,7 +83,7 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
                     headers: headers,
                     postData: postData
                 });
-                console.log(`[Captured Admin Backend API] ${method} ${reqUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
+                console.log(`[Captured Backend API] ${method} ${reqUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
             }
         }
     });
@@ -102,7 +94,6 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
 
         const resUrl = response.url();
 
-        // Extract token directly from Login API response JSON
         if (resUrl.includes('LoginGateWayValidateUserByID') || resUrl.includes('Login')) {
             try {
                 const json = await response.json();
@@ -139,7 +130,7 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
                     headers: req.headers(),
                     postData: postData
                 });
-                console.log(`[Captured Admin Backend JSON API] ${reqMethod} ${resUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
+                console.log(`[Captured Backend JSON API] ${reqMethod} ${resUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
             }
         }
     });
@@ -162,7 +153,6 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
     await setupPage.waitForLoadState('networkidle').catch(() => { });
     await context.storageState({ path: authFile }).catch(() => { });
 
-    // Extract auth token from localStorage / sessionStorage after login
     const storageToken = await setupPage.evaluate(() => {
         const findToken = (val: string | null): string | null => {
             if (!val) return null;
@@ -202,14 +192,29 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
         console.log(`[Captured Storage Auth Token] ${authHeader.substring(0, 35)}...`);
     }
 
-    // Mark user as logged in and clear pre-login unauthenticated APIs
     isLoggedIn = true;
     interceptedApis.clear();
 
-    console.log(`[Strict UI Login Success] Logged in. Navigating Admin Pages to trigger backend APIs...`);
+    console.log(`[Strict UI Login Success] Logged in. Navigating target pages to trigger backend APIs...`);
 
-    // Navigate to Admin pages to trigger full set of authenticated backend API calls
-    for (const pagePath of adminTargetPages) {
+    const allTargetPages = [
+        '/appcommon/enterprise',
+        '/appcommon/orgUnit',
+        '/appcommon/plant',
+        '/appcommon/customerparent',
+        '/appcommon/group',
+        '/appcommon/user',
+        '/appcommon/position',
+        '/appcommon/programs',
+        '/appcommon/external-filter',
+        '/appcommon/portal',
+        '/appcommon/dashboard',
+        '/appcommon/user-profile',
+        '/appcommon/help/mastermain',
+        '/appcommon/ticketing-system'
+    ];
+
+    for (const pagePath of allTargetPages) {
         const fullUrl = `${targetUrl.replace(/\/$/, '')}${pagePath}`;
         await setupPage.goto(fullUrl, { waitUntil: 'networkidle' }).catch(() => { });
         await setupPage.waitForTimeout(1000);
@@ -221,17 +226,16 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
     const capturedApiList = Array.from(interceptedApis.values());
 
     console.log('\n================================================================================');
-    console.log(` PHASE 1 COMPLETE: Captured ${capturedApiList.length} Real Admin Backend REST APIs!`);
+    console.log(` PHASE 1 COMPLETE: Captured ${capturedApiList.length} Real Backend REST APIs!`);
     console.log('================================================================================');
     capturedApiList.forEach((api, idx) => {
-        console.log(` [Admin API ${idx + 1}] ${api.method} -> ${api.url}`);
+        console.log(` [API ${idx + 1}] ${api.method} -> ${api.url}`);
     });
 
-    // Fallback if no XHR endpoints captured during initial load
     if (capturedApiList.length === 0) {
-        console.log('[Notice] Standard static routes captured. Adding core Admin backend API service endpoints...');
+        console.log('[Notice] Standard static routes captured. Adding core backend API service endpoints...');
         const cleanBase = targetUrl.replace(/\/$/, '');
-        const fallbackUrls = adminTargetPages.map(p => `${cleanBase}${p}`);
+        const fallbackUrls = allTargetPages.map(p => `${cleanBase}${p}`);
         fallbackUrls.forEach(url => {
             capturedApiList.push({
                 url,
@@ -242,10 +246,9 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
     }
 
     console.log('\n================================================================================');
-    console.log(` PHASE 2: EXECUTING PARALLEL PROMISE.ALL() PER ADMIN API SEQUENTIALLY ONE AFTER ANOTHER`);
+    console.log(` PHASE 2: EXECUTING PARALLEL PROMISE.ALL() PER API SEQUENTIALLY ONE AFTER ANOTHER`);
     console.log('================================================================================\n');
 
-    // Reset execution timer so it starts strictly from the 1st REST API triggering point after Phase 1 setup
     testStartedAt = Date.now();
     console.log(`[EXECUTION TIMER STARTED] 1st API Triggering Point Started at: ${new Date(testStartedAt).toISOString()}`);
     console.log(`[TIMING CONFIRMED] Execution duration limit (${(maxExecutionTimeMs / 1000).toFixed(2)}s) will count strictly from this moment.\n`);
@@ -265,7 +268,7 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
         }
 
         console.log(`==================================================`);
-        console.log(` Starting Admin Synchronized Cycle [${cycle}/${repeatCount}] (Elapsed: ${(currentElapsedMs / 1000).toFixed(2)}s / ${(maxExecutionTimeMs / 1000).toFixed(2)}s)`);
+        console.log(` Starting Synchronized Cycle [${cycle}/${repeatCount}] (Elapsed: ${(currentElapsedMs / 1000).toFixed(2)}s / ${(maxExecutionTimeMs / 1000).toFixed(2)}s)`);
         console.log(`==================================================`);
 
         for (let i = 0; i < capturedApiList.length; i++) {
@@ -279,12 +282,11 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
             const apiOrder = i + 1;
 
             console.log(`\n--------------------------------------------------------------------------------`);
-            console.log(` [Cycle ${cycle}/${repeatCount}] [Admin API ${apiOrder}/${capturedApiList.length}] Firing ${hitCount} Parallel Hits via Promise.all() -> ${targetApi.url}`);
+            console.log(` [Cycle ${cycle}/${repeatCount}] [API ${apiOrder}/${capturedApiList.length}] Firing ${hitCount} Parallel Hits via Promise.all() -> ${targetApi.url}`);
             console.log(`--------------------------------------------------------------------------------`);
 
             const orderStartTime = Date.now();
 
-            // Construct clean request headers stripping browser Host, Content-Length & Cookie headers
             const apiRequestHeaders: Record<string, string> = { ...defaultHeaders };
             for (const [k, v] of Object.entries(targetApi.headers || {})) {
                 const lowerK = k.toLowerCase();
@@ -335,7 +337,7 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
                         const status = response.status();
                         const isSuccess = response.ok() || status === 200 || status === 304 || status === 204;
 
-                        console.log(`[Admin API ${apiOrder}/${capturedApiList.length}] [Hit ${hitId}/${hitCount}] Status: ${status} (${response.statusText() || 'OK'}) | Response Time: ${responseTimeMs}ms | Size: ${payloadSizeBytes} B`);
+                        console.log(`[API ${apiOrder}/${capturedApiList.length}] [Hit ${hitId}/${hitCount}] Status: ${status} (${response.statusText() || 'OK'}) | Response Time: ${responseTimeMs}ms | Size: ${payloadSizeBytes} B`);
 
                         return {
                             id: hitId,
@@ -377,7 +379,7 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
             totalHitsFired += hitCount;
             totalSuccessfulHits += successHits;
 
-            console.log(`[Admin API ${apiOrder}/${capturedApiList.length} Finished] ${successHits}/${hitCount} parallel hits completed via Promise.all() in ${orderDurationMs}ms (${(orderDurationMs / 1000).toFixed(2)}s). Moving to next API...`);
+            console.log(`[API ${apiOrder}/${capturedApiList.length} Finished] ${successHits}/${hitCount} parallel hits completed via Promise.all() in ${orderDurationMs}ms (${(orderDurationMs / 1000).toFixed(2)}s). Moving to next API...`);
         }
     }
 
@@ -398,15 +400,15 @@ test(`Admin Pages Backend REST API Load Test - Real Azure App Service Spikes (${
     const untriggeredSkippedHitsCount = Math.max(0, totalTargetExpectedHits - totalHitsFired);
 
     const reportContent = `================================================================================
-            ADMIN BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT                      
+    BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT
 ================================================================================
-Target Admin Backend APIs:             ${capturedApiList.length} Endpoints
+Target Backend APIs Tested:            ${capturedApiList.length} Endpoints
 Total Simultaneous Hits/API:           ${hitCount}
 Repeat Cycles Executed:                ${repeatCount}
 Target Expected Total Hits:            ${totalTargetExpectedHits} hits
 --------------------------------------------------------------------------------
 Total Direct REST API Hits Fired:      ${totalHitsFired} hits
-  - Total Successful Responses:        ${totalSuccessfulHits} (200/304/204 OK)
+  - Total Successful Responses:        ${totalSuccessfulHits} (200/304 OK)
   - Total Failed Hits (Failed Num):    ${failedHits.length} hits
       * Failed via Single Hit Timeout: ${failedSingleHitTimeoutCount} hits
       * Failed via Max Execution Time: ${failedMaxExecutionTimeCount} hits
@@ -422,7 +424,7 @@ P95 Response Latency:                  ${p95Time} ms
     console.log(`\n` + reportContent + `\n`);
 
     testInfo.attachments.push({
-        name: 'Admin Backend REST API Load Report.txt',
+        name: 'Backend REST API Load Report.txt',
         contentType: 'text/plain',
         body: Buffer.from(reportContent, 'utf-8'),
     });
@@ -434,7 +436,7 @@ P95 Response Latency:                  ${p95Time} ms
 
     await saveMetricsToMongoDB(process.env.MONGODB_URI, {
         processId,
-        testModule: 'Admin Pages Backend REST API Load Test',
+        testModule: 'All Modules Backend REST API Load Test',
         startedDateTime,
         endedDateTime,
         concurrencyLevel: hitCount,
@@ -454,15 +456,15 @@ P95 Response Latency:                  ${p95Time} ms
         executionTimeSeconds: Number((testExecutionTimeMs / 1000).toFixed(2)),
         maxExecutionTimeSeconds: Number((maxExecutionTimeMs / 1000).toFixed(2)),
         singleHitTimeoutMs: singleHitTimeoutMs
-    }, 'admin_load_metrics');
+    }, 'all_modules_load_metrics');
 
     if (failedHits.length > 0) {
         await saveErrorLogsToMongoDB(
             process.env.MONGODB_URI,
             processId,
             failedHits,
-            'Admin Pages Backend REST API Load Test',
-            'admin_load_error_logs'
+            'All Modules Backend REST API Load Test',
+            'all_modules_load_error_logs'
         );
     }
 

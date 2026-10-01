@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { getPerformanceMetrics, attachPerformanceMetrics } from '../utils/perfMeter';
-import { saveMetricsToMongoDB, saveErrorLogsToMongoDB, generateProcessId } from '../utils/mongoSaver';
+import { getPerformanceMetrics, attachPerformanceMetrics } from '../../utils/perfMeter';
+import { saveMetricsToMongoDB, saveErrorLogsToMongoDB, generateProcessId } from '../../utils/mongoSaver';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const targetUrl = process.env.BASE_URL || 'https://polite-pond-09fb16200.7.azurestaticapps.net/';
-const userId = process.env.USER_ID || 'superadminmartinrea1@martinrea.com';
-const password = process.env.PASSWORD || 'Dell@1234';
+const targetUrl = process.env.QA_BASE_URL || process.env.BASE_URL || 'https://gentle-bush-00806120f.2.azurestaticapps.net/';
+const userId = process.env.QA_USER_ID || 'superadminmartinrea1@martinrea.com';
+const password = process.env.QA_PASSWORD || 'Qatest@123';
 const repeatCount = Number(process.env.CYCLE_COUNT || 1);
 const hitCount = Number(process.env.TAB_COUNT || 50);
 const maxExecutionTimeMs = Number(process.env.MAX_EXECUTION_TIME_MS || process.env.TEST_TIMEOUT_MS || 120000);
@@ -37,13 +37,13 @@ interface HitResult {
     failureReason?: 'SINGLE_HIT_TIMEOUT_EXCEEDED' | 'MAX_EXECUTION_TIME_EXCEEDED' | 'HTTP_ERROR' | string;
 }
 
-test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
+test(`QA All Modules Backend REST API Load Test - Real Azure App Service Spikes (${hitCount} Parallel Hits x ${repeatCount} Cycles)`, async ({ browser }, testInfo) => {
     test.setTimeout(0);
     let testStartedAt = Date.now();
-    const processId = generateProcessId('all_modules');
+    const processId = generateProcessId('qa_all_modules');
 
     console.log('================================================================================');
-    console.log(' PHASE 1: STRICT UI LOGIN & INTERCEPTING REAL BACKEND REST API ENDPOINTS         ');
+    console.log(' PHASE 1: STRICT UI LOGIN & INTERCEPTING QA REAL BACKEND REST API ENDPOINTS      ');
     console.log('================================================================================');
 
     const context = await browser.newContext({
@@ -83,7 +83,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
                     headers: headers,
                     postData: postData
                 });
-                console.log(`[Captured Backend API] ${method} ${reqUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
+                console.log(`[Captured QA Backend API] ${method} ${reqUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
             }
         }
     });
@@ -130,7 +130,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
                     headers: req.headers(),
                     postData: postData
                 });
-                console.log(`[Captured Backend JSON API] ${reqMethod} ${resUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
+                console.log(`[Captured QA Backend JSON API] ${reqMethod} ${resUrl} ${postData ? `(Payload: ${postData.length} B)` : ''}`);
             }
         }
     });
@@ -195,7 +195,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
     isLoggedIn = true;
     interceptedApis.clear();
 
-    console.log(`[Strict UI Login Success] Logged in. Navigating target pages to trigger backend APIs...`);
+    console.log(`[Strict UI Login Success] Logged in. Navigating QA target pages to trigger backend APIs...`);
 
     const allTargetPages = [
         '/appcommon/enterprise',
@@ -226,14 +226,14 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
     const capturedApiList = Array.from(interceptedApis.values());
 
     console.log('\n================================================================================');
-    console.log(` PHASE 1 COMPLETE: Captured ${capturedApiList.length} Real Backend REST APIs!`);
+    console.log(` PHASE 1 COMPLETE: Captured ${capturedApiList.length} Real QA Backend REST APIs!`);
     console.log('================================================================================');
     capturedApiList.forEach((api, idx) => {
-        console.log(` [API ${idx + 1}] ${api.method} -> ${api.url}`);
+        console.log(` [QA API ${idx + 1}] ${api.method} -> ${api.url}`);
     });
 
     if (capturedApiList.length === 0) {
-        console.log('[Notice] Standard static routes captured. Adding core backend API service endpoints...');
+        console.log('[Notice] Standard static routes captured. Adding core QA backend API service endpoints...');
         const cleanBase = targetUrl.replace(/\/$/, '');
         const fallbackUrls = allTargetPages.map(p => `${cleanBase}${p}`);
         fallbackUrls.forEach(url => {
@@ -246,7 +246,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
     }
 
     console.log('\n================================================================================');
-    console.log(` PHASE 2: EXECUTING PARALLEL PROMISE.ALL() PER API SEQUENTIALLY ONE AFTER ANOTHER`);
+    console.log(` PHASE 2: EXECUTING PARALLEL PROMISE.ALL() PER QA API SEQUENTIALLY ONE AFTER ANOTHER`);
     console.log('================================================================================\n');
 
     testStartedAt = Date.now();
@@ -268,7 +268,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
         }
 
         console.log(`==================================================`);
-        console.log(` Starting Synchronized Cycle [${cycle}/${repeatCount}] (Elapsed: ${(currentElapsedMs / 1000).toFixed(2)}s / ${(maxExecutionTimeMs / 1000).toFixed(2)}s)`);
+        console.log(` Starting QA Synchronized Cycle [${cycle}/${repeatCount}] (Elapsed: ${(currentElapsedMs / 1000).toFixed(2)}s / ${(maxExecutionTimeMs / 1000).toFixed(2)}s)`);
         console.log(`==================================================`);
 
         for (let i = 0; i < capturedApiList.length; i++) {
@@ -282,7 +282,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
             const apiOrder = i + 1;
 
             console.log(`\n--------------------------------------------------------------------------------`);
-            console.log(` [Cycle ${cycle}/${repeatCount}] [API ${apiOrder}/${capturedApiList.length}] Firing ${hitCount} Parallel Hits via Promise.all() -> ${targetApi.url}`);
+            console.log(` [Cycle ${cycle}/${repeatCount}] [QA API ${apiOrder}/${capturedApiList.length}] Firing ${hitCount} Parallel Hits via Promise.all() -> ${targetApi.url}`);
             console.log(`--------------------------------------------------------------------------------`);
 
             const orderStartTime = Date.now();
@@ -337,7 +337,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
                         const status = response.status();
                         const isSuccess = response.ok() || status === 200 || status === 304 || status === 204;
 
-                        console.log(`[API ${apiOrder}/${capturedApiList.length}] [Hit ${hitId}/${hitCount}] Status: ${status} (${response.statusText() || 'OK'}) | Response Time: ${responseTimeMs}ms | Size: ${payloadSizeBytes} B`);
+                        console.log(`[QA API ${apiOrder}/${capturedApiList.length}] [Hit ${hitId}/${hitCount}] Status: ${status} (${response.statusText() || 'OK'}) | Response Time: ${responseTimeMs}ms | Size: ${payloadSizeBytes} B`);
 
                         return {
                             id: hitId,
@@ -379,7 +379,7 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
             totalHitsFired += hitCount;
             totalSuccessfulHits += successHits;
 
-            console.log(`[API ${apiOrder}/${capturedApiList.length} Finished] ${successHits}/${hitCount} parallel hits completed via Promise.all() in ${orderDurationMs}ms (${(orderDurationMs / 1000).toFixed(2)}s). Moving to next API...`);
+            console.log(`[QA API ${apiOrder}/${capturedApiList.length} Finished] ${successHits}/${hitCount} parallel hits completed via Promise.all() in ${orderDurationMs}ms (${(orderDurationMs / 1000).toFixed(2)}s). Moving to next API...`);
         }
     }
 
@@ -400,9 +400,9 @@ test(`All Modules Backend REST API Load Test - Real Azure App Service Spikes (${
     const untriggeredSkippedHitsCount = Math.max(0, totalTargetExpectedHits - totalHitsFired);
 
     const reportContent = `================================================================================
-    BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT
+    QA BACKEND REST API LOAD & AZURE APP SERVICE SPIKE REPORT
 ================================================================================
-Target Backend APIs Tested:            ${capturedApiList.length} Endpoints
+Target QA Backend APIs Tested:         ${capturedApiList.length} Endpoints
 Total Simultaneous Hits/API:           ${hitCount}
 Repeat Cycles Executed:                ${repeatCount}
 Target Expected Total Hits:            ${totalTargetExpectedHits} hits
@@ -424,19 +424,18 @@ P95 Response Latency:                  ${p95Time} ms
     console.log(`\n` + reportContent + `\n`);
 
     testInfo.attachments.push({
-        name: 'Backend REST API Load Report.txt',
+        name: 'QA Backend REST API Load Report.txt',
         contentType: 'text/plain',
         body: Buffer.from(reportContent, 'utf-8'),
     });
 
-    // Save Execution Metrics to MongoDB via Connection String
     const timedOutCount = allResults.filter(r => !r.success || r.responseTimeMs >= 45000).length;
     const startedDateTime = new Date(testStartedAt).toISOString();
     const endedDateTime = new Date(testStartedAt + testExecutionTimeMs).toISOString();
 
     await saveMetricsToMongoDB(process.env.MONGODB_URI, {
         processId,
-        testModule: 'All Modules Backend REST API Load Test',
+        testModule: 'QA All Modules Backend REST API Load Test',
         startedDateTime,
         endedDateTime,
         concurrencyLevel: hitCount,
@@ -456,15 +455,15 @@ P95 Response Latency:                  ${p95Time} ms
         executionTimeSeconds: Number((testExecutionTimeMs / 1000).toFixed(2)),
         maxExecutionTimeSeconds: Number((maxExecutionTimeMs / 1000).toFixed(2)),
         singleHitTimeoutMs: singleHitTimeoutMs
-    }, 'all_modules_load_metrics');
+    }, 'qa_all_modules_load_metrics');
 
     if (failedHits.length > 0) {
         await saveErrorLogsToMongoDB(
             process.env.MONGODB_URI,
             processId,
             failedHits,
-            'All Modules Backend REST API Load Test',
-            'all_modules_load_error_logs'
+            'QA All Modules Backend REST API Load Test',
+            'qa_all_modules_load_error_logs'
         );
     }
 
